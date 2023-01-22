@@ -26,7 +26,7 @@ public final class Venuzdonoa {
             // Loading it into system class loader wont work,
             // see ClassLoader::findNative
             ClassWriter writer = new ClassWriter(0);
-            writer.visit(V1_6, ACC_PUBLIC, "dev/xdark/Venuzdonoa", null, "java/lang/Object", null);
+            writer.visit(V1_6, ACC_PUBLIC, "dev/xdark/venuzdonoa/LibraryLoader", null, "java/lang/Object", null);
             MethodVisitor mv = writer.visitMethod(ACC_PUBLIC | ACC_STATIC, "load", "()V", null, null);
             mv.visitCode();
             Path path = Paths.get(System.getProperty("java.home"));
