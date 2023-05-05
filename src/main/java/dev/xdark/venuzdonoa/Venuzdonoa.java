@@ -22,48 +22,64 @@ public final class Venuzdonoa {
     static {
         try {
             InnerClassLoader cl = new InnerClassLoader();
-            // Step 1: load java.dll into the class loader
-            // Loading it into system class loader wont work,
-            // see ClassLoader::findNative
-            ClassWriter writer = new ClassWriter(0);
-            writer.visit(V1_6, ACC_PUBLIC, "dev/xdark/venuzdonoa/LibraryLoader", null, "java/lang/Object", null);
-            MethodVisitor mv = writer.visitMethod(ACC_PUBLIC | ACC_STATIC, "load", "()V", null, null);
-            mv.visitCode();
-            Path path = Paths.get(System.getProperty("java.home"));
-            Path jre = path.resolve("jre");
-            if (Files.isDirectory(jre)) {
-                path = jre;
-            }
-            String os = System.getProperty("os.name").toLowerCase(Locale.US);
-            if (os.contains("win")) {
-                path = path.resolve("bin/java.dll");
-            } else if (os.contains("osx")) {
-                path = path.resolve("lib/libjava.dylib");
-            } else {
-                path = path.resolve("lib/libjava.so");
-            }
-            mv.visitCode();
-            mv.visitLdcInsn(path.toString());
-            mv.visitMethodInsn(INVOKESTATIC, "java/lang/System", "load", "(Ljava/lang/String;)V", false);
-            mv.visitInsn(RETURN);
-            mv.visitMaxs(1, 0);
-            mv.visitEnd();
-            cl.defineClass(writer.toByteArray()).getMethod("load").invoke(null);
-            // Step 2: load NativeMethodAccessorImpl
+            // Step 1: find correct class name for NativeMethodAccessorImpl, based on current jre
+            // this is important since the java shared library only contains native method impls for that specific class,
+            // and we imitate that class to get hold of the invoke0() method
             String className;
             URL url = ClassLoader.getSystemResource("jdk/internal/reflect/NativeMethodAccessorImpl.class");
             if (url == null) {
+                // sun jre
                 className = "sun/reflect/NativeMethodAccessorImpl";
             } else {
+                // openjdk or any other sensible jre
                 className = "jdk/internal/reflect/NativeMethodAccessorImpl";
             }
-            writer = new ClassWriter(0);
+            ClassWriter writer = new ClassWriter(0);
+            // start remaking a version of NativeMethodAccessorIpl
             writer.visit(V1_6, ACC_PUBLIC, className, null, "java/lang/Object", null);
-            mv = writer.visitMethod(ACC_PUBLIC | ACC_STATIC | ACC_NATIVE, "invoke0", "(Ljava/lang/reflect/Method;Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", null, null);
-            mv.visitMaxs(0, 3);
+
+            MethodVisitor methodVisitor = writer.visitMethod(ACC_PUBLIC | ACC_STATIC, "load", "()V", null, null);
+            Path toLoad = Paths.get(System.getProperty("java.home"));
+            Path jre = toLoad.resolve("jre");
+            if (Files.isDirectory(jre)) {
+                toLoad = jre;
+            }
+            String os = System.getProperty("os.name").toLowerCase(Locale.US);
+            if (os.contains("win")) {
+                // {java.home}(/jre)?/bin/java.dll
+                toLoad = toLoad.resolve("bin/java.dll");
+            } else if (os.contains("osx")) {
+                // {java.home}(/jre)?/bin/libjava.dylib
+                toLoad = toLoad.resolve("lib/libjava.dylib");
+            } else {
+                // {java.home}(/jre)?/bin/libjava.so
+                toLoad = toLoad.resolve("lib/libjava.so");
+            }
+            // loads the java shared library we found earlier into our NativeMethodAccessorImpl
+            methodVisitor.visitCode();
+            methodVisitor.visitLdcInsn(toLoad.toString());
+            methodVisitor.visitMethodInsn(INVOKESTATIC, "java/lang/System", "load", "(Ljava/lang/String;)V", false);
+            methodVisitor.visitInsn(RETURN);
+            methodVisitor.visitMaxs(1, 0);
+            methodVisitor.visitEnd();
+
+            // public static native java.lang.Object invoke0(java.lang.reflect.Method, java.lang.Object, java.lang.Object[]);
+            // this is the target method we want to get hold of
+            methodVisitor = writer.visitMethod(
+                ACC_PUBLIC | ACC_STATIC | ACC_NATIVE,
+                "invoke0",
+                "(Ljava/lang/reflect/Method;Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;",
+                null,
+                null
+            );
+            methodVisitor.visitMaxs(0, 3);
             Class<?> k = cl.defineClass(writer.toByteArray());
+            // Step 2: load java.dll into the class loader
+            // Loading it into system class loader won't work,
+            // see ClassLoader::findNative
+            k.getMethod("load").invoke(null);
             MH = MethodHandles.lookup().findStatic(k, "invoke0", MethodType.methodType(Object.class, Method.class, Object.class, Object[].class));
-        } catch (Exception ex) {
+        } catch (Throwable ex) {
             throw new ExceptionInInitializerError(ex);
         }
     }
@@ -71,14 +87,26 @@ public final class Venuzdonoa {
     private Venuzdonoa() {
     }
 
+    /**
+     * Makes an invoker for {@code m}, entirely bypassing the module system
+     *
+     * @param m Method to make an invoker for
+     *
+     * @return MethodHandle that, when invoked, invokes {@code m}
+     */
     public static MethodHandle makeMethodAccessor(Method m) {
+        // set first argument of our invoke0 to m
         MethodHandle mh = MH.bindTo(m);
         MethodType type = MethodType.methodType(m.getReturnType(), m.getParameterTypes());
         if (Modifier.isStatic(m.getModifiers())) {
+            // set second one to null, this is a static method
             mh = mh.bindTo(null);
         } else {
+            // virtual method, first slot has instance
             type = type.insertParameterTypes(0, Object.class);
         }
+        // collect `m.getParameterCount()` trailing args into the args array,
+        // first arg (if present) gets filled into the instance, otherwise set to null by previous bindTo(null)
         mh = mh.asCollector(Object[].class, m.getParameterCount());
         return mh.asType(type);
     }
