@@ -58,20 +58,27 @@ public final class Venuzdonoa {
             mv.visitMaxs(1, 0);
             mv.visitEnd();
 
+/*
+            class LibraryLoader {
+
+                public static void load() {
+                    System.load("lib/libjava.so");
+                }
+            }
+*/
+
             /*
              * Actually load the binary by invoking the method
              */
             innerClassLoader.defineClass(writer.toByteArray()).getMethod("load")
                     .invoke(null);
 
-//            class LibraryLoader {
-//
-//                public static void load() {
-//                    System.load("lib/libjava.so");
-//                }
-//            }
 
-            // Step 2: load NativeMethodAccessorImpl
+            /*
+             * STEP 2:
+             * Load custom NativeMethodAccessorImpl implementation.
+             * Get the correct path
+             */
             String className;
             URL url = ClassLoader.getSystemResource("jdk/internal/reflect/NativeMethodAccessorImpl.class");
             if (url == null) {
@@ -80,19 +87,26 @@ public final class Venuzdonoa {
                 className = "jdk/internal/reflect/NativeMethodAccessorImpl";
             }
 
+            /*
+             * Create own NativeMethodAccessorImpl that only contains the invoke0 method.
+             * Make the invoke0 method public while we are at it.
+             * We don't care about the rest
+             */
             ClassWriter writer2 = new ClassWriter(0);
-            writer2.visit(V1_6, ACC_PUBLIC, className, null, "java/lang/Object", null); // Empty constructor
+            writer2.visit(V1_6, ACC_PUBLIC, className, null, "java/lang/Object", null);
             MethodVisitor mv2 = writer2.visitMethod(ACC_PUBLIC | ACC_STATIC | ACC_NATIVE, "invoke0", "(Ljava/lang/reflect/Method;Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", null, null);
             mv2.visitMaxs(0, 3);
             Class<?> dummyClazz = innerClassLoader.defineClass(writer2.toByteArray());
+
+            /*
+             * Create method handle for our (now) public invoke0 method.
+             * TODO: Due to the native method being public now we can access it without issues
+             *  as the JVM has no restrictions inside its native implementation?
+             */
             METHOD_HANDLE = MethodHandles.lookup().findStatic(dummyClazz, "invoke0", MethodType.methodType(Object.class, Method.class, Object.class, Object[].class));
         } catch (Exception ex) {
             throw new ExceptionInInitializerError(ex);
         }
-    }
-
-    private Venuzdonoa() {
-        // Empty
     }
 
     @SuppressWarnings("unused")
