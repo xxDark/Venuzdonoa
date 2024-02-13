@@ -17,18 +17,11 @@ import java.util.Locale;
 import static org.objectweb.asm.Opcodes.*;
 
 public final class Venuzdonoa {
-    private static final MethodHandle MH;
+
+    private static final MethodHandle METHOD_HANDLE;
 
     static {
         try {
-            InnerClassLoader cl = new InnerClassLoader();
-            // Step 1: load java.dll into the class loader
-            // Loading it into system class loader wont work,
-            // see ClassLoader::findNative
-            ClassWriter writer = new ClassWriter(0);
-            writer.visit(V1_6, ACC_PUBLIC, "dev/xdark/venuzdonoa/LibraryLoader", null, "java/lang/Object", null);
-            MethodVisitor mv = writer.visitMethod(ACC_PUBLIC | ACC_STATIC, "load", "()V", null, null);
-            mv.visitCode();
             Path path = Paths.get(System.getProperty("java.home"));
             Path jre = path.resolve("jre");
             if (Files.isDirectory(jre)) {
@@ -42,13 +35,42 @@ public final class Venuzdonoa {
             } else {
                 path = path.resolve("lib/libjava.so");
             }
+
+            InnerClassLoader innerClassLoader = new InnerClassLoader();
+
+            /*
+             * STEP: 1
+             * Load libjava binary in our custom class loader.
+             * Loading the binary in the system class loader won't work
+             */
+            ClassWriter writer = new ClassWriter(0);
+            writer.visit(V1_6, ACC_PUBLIC, "dev/xdark/venuzdonoa/LibraryLoader", null, "java/lang/Object", null);
+            MethodVisitor mv = writer.visitMethod(ACC_PUBLIC | ACC_STATIC, "load", "()V", null, null);
+
+            /*
+             * Add method implementation for dummy class method: load
+             * System.load(...);
+             */
             mv.visitCode();
             mv.visitLdcInsn(path.toString());
             mv.visitMethodInsn(INVOKESTATIC, "java/lang/System", "load", "(Ljava/lang/String;)V", false);
             mv.visitInsn(RETURN);
             mv.visitMaxs(1, 0);
             mv.visitEnd();
-            cl.defineClass(writer.toByteArray()).getMethod("load").invoke(null);
+
+            /*
+             * Actually load the binary by invoking the method
+             */
+            innerClassLoader.defineClass(writer.toByteArray()).getMethod("load")
+                    .invoke(null);
+
+//            class LibraryLoader {
+//
+//                public static void load() {
+//                    System.load("lib/libjava.so");
+//                }
+//            }
+
             // Step 2: load NativeMethodAccessorImpl
             String className;
             URL url = ClassLoader.getSystemResource("jdk/internal/reflect/NativeMethodAccessorImpl.class");
@@ -57,30 +79,33 @@ public final class Venuzdonoa {
             } else {
                 className = "jdk/internal/reflect/NativeMethodAccessorImpl";
             }
-            writer = new ClassWriter(0);
-            writer.visit(V1_6, ACC_PUBLIC, className, null, "java/lang/Object", null);
-            mv = writer.visitMethod(ACC_PUBLIC | ACC_STATIC | ACC_NATIVE, "invoke0", "(Ljava/lang/reflect/Method;Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", null, null);
-            mv.visitMaxs(0, 3);
-            Class<?> k = cl.defineClass(writer.toByteArray());
-            MH = MethodHandles.lookup().findStatic(k, "invoke0", MethodType.methodType(Object.class, Method.class, Object.class, Object[].class));
+
+            ClassWriter writer2 = new ClassWriter(0);
+            writer2.visit(V1_6, ACC_PUBLIC, className, null, "java/lang/Object", null); // Empty constructor
+            MethodVisitor mv2 = writer2.visitMethod(ACC_PUBLIC | ACC_STATIC | ACC_NATIVE, "invoke0", "(Ljava/lang/reflect/Method;Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", null, null);
+            mv2.visitMaxs(0, 3);
+            Class<?> dummyClazz = innerClassLoader.defineClass(writer2.toByteArray());
+            METHOD_HANDLE = MethodHandles.lookup().findStatic(dummyClazz, "invoke0", MethodType.methodType(Object.class, Method.class, Object.class, Object[].class));
         } catch (Exception ex) {
             throw new ExceptionInInitializerError(ex);
         }
     }
 
     private Venuzdonoa() {
+        // Empty
     }
 
-    public static MethodHandle makeMethodAccessor(Method m) {
-        MethodHandle mh = MH.bindTo(m);
-        MethodType type = MethodType.methodType(m.getReturnType(), m.getParameterTypes());
-        if (Modifier.isStatic(m.getModifiers())) {
-            mh = mh.bindTo(null);
+    @SuppressWarnings("unused")
+    public static MethodHandle makeMethodAccessor(Method method) {
+        MethodHandle methodHandle = METHOD_HANDLE.bindTo(method);
+        MethodType type = MethodType.methodType(method.getReturnType(), method.getParameterTypes());
+        if (Modifier.isStatic(method.getModifiers())) {
+            methodHandle = methodHandle.bindTo(null);
         } else {
             type = type.insertParameterTypes(0, Object.class);
         }
-        mh = mh.asCollector(Object[].class, m.getParameterCount());
-        return mh.asType(type);
+        methodHandle = methodHandle.asCollector(Object[].class, method.getParameterCount());
+        return methodHandle.asType(type);
     }
 
     private static final class InnerClassLoader extends ClassLoader {
@@ -88,5 +113,6 @@ public final class Venuzdonoa {
         Class<?> defineClass(byte[] b) {
             return defineClass(null, b, 0, b.length);
         }
+
     }
 }
