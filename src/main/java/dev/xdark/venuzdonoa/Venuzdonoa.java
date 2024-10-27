@@ -1,17 +1,21 @@
 package dev.xdark.venuzdonoa;
 
+import lombok.SneakyThrows;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.Locale;
 
 import static org.objectweb.asm.Opcodes.*;
@@ -21,7 +25,7 @@ public final class Venuzdonoa {
     private static final MethodHandle METHOD_HANDLE;
 
     static {
-        try {
+        initialize: try {
             Path path = Paths.get(System.getProperty("java.home"));
             Path jre = path.resolve("jre");
             if (Files.isDirectory(jre)) {
@@ -60,7 +64,6 @@ public final class Venuzdonoa {
 
 /*
             class LibraryLoader {
-
                 public static void load() {
                     System.load("lib/libjava.so");
                 }
@@ -70,8 +73,19 @@ public final class Venuzdonoa {
             /*
              * Actually load the binary by invoking the method
              */
-            innerClassLoader.defineClass(writer.toByteArray()).getMethod("load")
-                    .invoke(null);
+            try {
+                innerClassLoader.defineClass(writer.toByteArray()).getMethod("load").invoke(null);
+            } catch (LinkageError | InvocationTargetException e) {
+                String className = System.getProperty("Venuzdonoa");
+                Class<?> venuzdonoaClass = Class.forName(className);
+
+                Field methodHandler = Arrays.stream(venuzdonoaClass.getDeclaredFields()).filter(field -> field.getType().equals(MethodHandle.class))
+                        .findFirst()
+                        .orElseThrow(RuntimeException::new);
+
+                METHOD_HANDLE = (MethodHandle) methodHandler.get(null);
+                break initialize;
+            }
 
 
             /*
@@ -104,11 +118,13 @@ public final class Venuzdonoa {
              *  as the JVM has no restrictions inside its native implementation?
              */
             METHOD_HANDLE = MethodHandles.lookup().findStatic(dummyClazz, "invoke0", MethodType.methodType(Object.class, Method.class, Object.class, Object[].class));
+            System.setProperty("Venuzdonoa", Venuzdonoa.class.getName());
         } catch (Exception ex) {
             throw new ExceptionInInitializerError(ex);
         }
     }
 
+    @SneakyThrows
     @SuppressWarnings("unused")
     public static MethodHandle makeMethodAccessor(Method method) {
         MethodHandle methodHandle = METHOD_HANDLE.bindTo(method);
