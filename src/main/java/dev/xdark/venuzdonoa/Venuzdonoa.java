@@ -62,13 +62,11 @@ public final class Venuzdonoa {
             mv.visitMaxs(1, 0);
             mv.visitEnd();
 
-/*
-            class LibraryLoader {
-                public static void load() {
-                    System.load("lib/libjava.so");
-                }
-            }
-*/
+//            class LibraryLoader {
+//                public static void load() {
+//                    System.load("lib/libjava.so");
+//                }
+//            }
 
             /*
              * Actually load the binary by invoking the method
@@ -79,9 +77,7 @@ public final class Venuzdonoa {
                 String className = System.getProperty("Venuzdonoa");
                 Class<?> venuzdonoaClass = Class.forName(className);
 
-                Field methodHandler = Arrays.stream(venuzdonoaClass.getDeclaredFields()).filter(field -> field.getType().equals(MethodHandle.class))
-                        .findFirst()
-                        .orElseThrow(RuntimeException::new);
+                Field methodHandler = getMethodHandleField(venuzdonoaClass);
 
                 METHOD_HANDLE = (MethodHandle) methodHandler.get(null);
                 break initialize;
@@ -114,14 +110,24 @@ public final class Venuzdonoa {
 
             /*
              * Create method handle for our (now) public invoke0 method.
-             * TODO: Due to the native method being public now we can access it without issues
-             *  as the JVM has no restrictions inside its native implementation?
              */
             METHOD_HANDLE = MethodHandles.lookup().findStatic(dummyClazz, "invoke0", MethodType.methodType(Object.class, Method.class, Object.class, Object[].class));
+
+            /*
+             * Make MethodHandle available for other (maybe shadowed) instances of Venuzdonoa
+             */
             System.setProperty("Venuzdonoa", Venuzdonoa.class.getName());
+            getMethodHandleField(Venuzdonoa.class).setAccessible(true);
+
         } catch (Exception ex) {
             throw new ExceptionInInitializerError(ex);
         }
+    }
+
+    private static Field getMethodHandleField(Class<?> venuzdonoaClass) {
+        return Arrays.stream(venuzdonoaClass.getDeclaredFields()).filter(field -> field.getType().equals(MethodHandle.class))
+                .findFirst()
+                .orElseThrow(RuntimeException::new);
     }
 
     @SneakyThrows
